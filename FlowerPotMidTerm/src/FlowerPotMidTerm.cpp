@@ -57,9 +57,11 @@ unsigned int currentTime;
 int color, value, quality, moist;
 char degree = 248;
 char percent = 37;
-bool timeEnd;
+bool userLit;
 byte status;
 String pollution;
+
+
 
 
 /************Declare Functions*************/
@@ -104,7 +106,7 @@ void setup() {
     Serial.printf("BME280 at address 0x%02X failed to start ", BMEADDRESS);
   }
   starttime = millis();//get the current time;
-  Time.zone( -7); // MST = -7, MDT = -6
+  Time.zone( -6); // MST = -7, MDT = -6
   Particle.syncTime(); // Sync time with Particle Cloud
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.display();
@@ -114,6 +116,7 @@ void setup() {
   mqtt.subscribe(&waterSub);
   mqtt.subscribe(&colorSub);
   digitalWrite(FANPIN, LOW);
+  userLit = false;
 }
 
 // loop() runs over and over again, as quickly as it can execute.
@@ -122,6 +125,9 @@ void loop() {
   MQTT_ping();
   //digitalWrite(FANPIN, HIGH);
   
+  dateTime = Time.timeStr();
+  timeOnly = dateTime.substring(11,19);
+
   //Moisture
   moist = analogRead(MPIN);
   if(moist > 2500){
@@ -133,13 +139,16 @@ void loop() {
   }
 
   //Photodiode
-  lightIn = analogRead(PHOTOPIN);
-  if(lightIn < 25){
-    pixelFill(0, PIXELCOUNT, white);
-  }
-  if(lightIn >= 75){
-    pixel.clear();
-    pixel.show();
+  if(userLit == false){
+    lightIn = analogRead(PHOTOPIN);
+    Serial.printf("%i\n", lightIn);
+    if(lightIn < 25){
+      pixelFill(0, PIXELCOUNT, white);
+    }
+    if(lightIn >= 75){
+      pixel.clear();
+      pixel.show();
+    }
   }
   
   //BME Code
@@ -154,6 +163,7 @@ void loop() {
   display.setCursor(0,0);
   display.setTextSize(2);
   display.setTextColor(WHITE);
+  display.printf(" "+timeOnly+"\n");
   display.printf("%0.0f%c || %0.0f%c",tempF, degree, humidRH, percent);
   display.setTextSize(1);
   display.printf("Moisture Level: %i\n", moist);
@@ -169,7 +179,7 @@ void loop() {
       lastMinute = millis();
   }
   digitalWrite(FANPIN, LOW);
-  timeEnd = false;
+  
   //Dust Sensor Code
   // duration = pulseIn(DUSTPIN, LOW);
   // lowpulseoccupancy = lowpulseoccupancy+duration;
@@ -219,18 +229,20 @@ void loop() {
   //delay(1000);
   display.display();
   display.clearDisplay();
+
   if((millis() - lastSecond)> 1000){
     lastSecond = millis();
-    //Serial.printf("\nSensor value: %i", value);
-    Serial.printf("\nLight IN: %i", lightIn);
-    //Serial.printf("\n%i", quality);
+  
+    
   }
 
   //Subscribe from Adafruit
   Adafruit_MQTT_Subscribe *subscription;
   while ((subscription = mqtt.readSubscription(100))) {
     if(subscription == &colorSub){
+      Serial.printf((char *)colorSub.lastread);
       color = atoi((char *)colorSub.lastread);
+      Serial.printf("\n%i",color);
       pixelFill(0,PIXELCOUNT,color);
     }
     //Turns on or off light
@@ -238,15 +250,18 @@ void loop() {
       lightOn = atoi((char *)lightSub.lastread);
       if(lightOn == 1){
         pixelFill(0,PIXELCOUNT,white);
+        userLit = true;
       }
       else{
         pixel.clear();
         pixel.show();
+        userLit = false;
       }
     }
+    //Turns on my water
     if (subscription == &waterSub) {
       int subValue = atoi((char *)waterSub.lastread);
-      Serial.printf("%f\n", subValue);
+      Serial.printf("%i\n", subValue);
       if(subValue == 1.0){
         digitalWrite(SWITCHPIN, HIGH);
       }
@@ -257,22 +272,34 @@ void loop() {
     
   }
 
-  //Publish to Adafruit
-  if((millis()-lastTime > 10000)) {
+  //Publish to Adafruit Every Minute
+  if((millis()-lastTime > 60000)) {
     if(mqtt.Update()) {
       aqPub.publish(value);
       aqPub.publish(pollution);
       tempPub.publish(tempF);
-      //dustPub.publish(concentration);
       humidPub.publish(humidRH);
-      moistPub.publish(moist);
-      Serial.printf("Publishing AQ: %0.2f \n",pubValue);
+      tempPub.publish(tempF);
+      humidPub.publish(humidRH);
+      int moisture = 4095 - moist;
+      moistPub.publish(moisture);
+      Serial.printf("Publishing AQ: %i \n",value);
       Serial.printf("Publishing TempF: %0.2f \n",tempF); 
       //Serial.printf("Publishing Dust: %0.2f \n",concentration);  
       Serial.printf("Publishing Humidity: %0.2f \n",humidRH);
       } 
     lastTime = millis();
   }
+  //Publish to Adafruit Every 10 seconds
+  // if((millis()-lastTime > 60000)) {
+  //   if(mqtt.Update()) {
+  //     tempPub.publish(tempF);
+  //     humidPub.publish(humidRH);
+  //     int moisture = 4095 - moist;
+  //     moistPub.publish(moisture);
+  //   }
+  //   lastTime = millis();
+  // }
 }
 
 // Function to connect and reconnect as necessary to the MQTT server.
